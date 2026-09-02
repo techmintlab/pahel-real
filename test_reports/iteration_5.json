@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 5 focused re-verification of the 4 fixes flagged in iteration_4.json. All 4 fixes are verified. Backend pytest suite: 14/14 PASS on live preview URL (was 13/14). FIX 1 (WebSocket moved to /api/ws/sos/{id}): wss://<preview>/api/ws/sos/{id}?token=<jwt> now connects through the public ingress; snapshot frame delivered on open, location frame on POST /api/sos/{id}/location, status frame on POST /api/sos/{id}/cancel, and 1008 close on missing/invalid token — all asserted in pytest. FIX 2 (subscriptions/verify HMAC enforcement): invalid signature returns 400, mock_payment path blocked when RAZORPAY_KEY_SECRET is set, and a correctly computed HMAC-SHA256 signature succeeds (asserted the same way for donations/verify as a regression). FIX 3 (shadow* -> boxShadow): theme.ts and one leftover shadowOpacity in app/index.tsx now removed — the shared theme file was clean, but a stray `shadowOpacity: 0` remained on `buttonSecondary` in /app/frontend/app/index.tsx which I replaced with `boxShadow: 'none'`. After Expo restart, no shadow* deprecation warnings are logged on either mobile home or /admin. FIX 4 (stray text node): confirmed OTP auth screen no longer prints 'A text node cannot be a child of a <View>' — zero occurrences across mobile auth (send OTP, verify OTP) and /admin. Regression sanity (admin login, SOS create + owner-only location, donations/verify signature enforcement) all still green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pahel_regression.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/ui/iter5_mobile_auth.jpeg",
+    "/app/test_reports/ui/iter5_admin.jpeg",
+    "/app/test_reports/iteration_5.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still ~800 lines mixing routing/DTOs/adapters — consider splitting into routers/services modules; not blocking.",
+    "server.py get_sos still allows any authenticated user to fetch an ACTIVE SOS by id (exposes user_mobile + last known location). Intentional for responders but consider limiting to nearby users or an explicit responder role in a follow-up."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pahel_regression.py",
+    "/app/frontend/app/index.tsx",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_5.json"
+  ],
+  "success_rate": {"backend": "100% (14/14 pytest against public preview)", "frontend": "100% (mobile auth + /admin render clean; no shadow*/text-node warnings)"},
+  "seed_data_creation": "Tests continue to create transient TEST_-tagged users/SOS/blood/volunteer/broadcast/subscription rows. Admin credentials and seeded plans untouched. WhatsApp bridge exercised sparingly (only via existing SOS create tests, using +91999... synthetic emergency contact).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "WebSocket is now correctly reachable at wss://<preview>/api/ws/sos/{id}?token=<jwt>. Subscription verify mirrors donation verify: enforces HMAC-SHA256 when RAZORPAY_KEY_SECRET is set. Frontend theme.ts uses boxShadow only; a stray shadowOpacity:0 on buttonSecondary in app/index.tsx was fixed this iteration. Live WhatsApp bridge and live Razorpay keys remain active — do not spam either. Admin route continues to render inside Expo Router at /admin.",
+  "rca_of_issue": "Iteration 4 failure (WebSocket 502 through preview) had two possible fixes; main agent chose the ingress-friendly one: move the endpoint under the already-proxied /api prefix. Verified by running the pytest websocket case against the public wss URL — it now completes end-to-end (snapshot -> location -> status frames) whereas iteration_4 could only complete against ws://localhost:8001. The lingering RN Web shadow* warning turned out to be a second, non-theme source: shadowOpacity:0 on buttonSecondary in app/index.tsx; fixed by using boxShadow:'none'."
+}

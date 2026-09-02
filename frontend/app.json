@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "PAHEL FOUNDATION",
+    "slug": "pahel-foundation",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/pahel-logo.png",
+    "scheme": "pahelfoundation",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Location helps PAHEL send nearby emergency support.",
+        "NSUserNotificationsUsageDescription": "Notifications keep you informed about nearby help.",
+        "UIBackgroundModes": ["location", "remote-notification"]
+      },
+      "bundleIdentifier": "com.emergent.pahelfoundation.m04l6f"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/pahel-logo.png",
+        "backgroundColor": "#FDFBF7"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "POST_NOTIFICATIONS"],
+      "package": "com.emergent.pahelfoundation.m04l6f"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/pahel-logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FDFBF7"
+        }
+      ],
+      "expo-notifications",
+      "expo-location"
+    ],
+    "extra": {
+      "backendUrl": ""
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

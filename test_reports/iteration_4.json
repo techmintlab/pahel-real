@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 4 regression validated PAHEL FOUNDATION backend + Expo admin + mobile auth on the live preview. 13/14 pytest cases pass. Live WhatsApp bridge and live Razorpay keys are confirmed active (SOS returns whatsapp_status='sent', donations/verify rejects invalid signature and disables mock_payment). Admin /admin route now renders in Expo Router: login succeeds, dashboard shows real counts (44 users, 11 SOS, 2 open blood, ₹3,493 donations), every tab (Users/SOS/Blood/Volunteers/Plans/Donations/Subscriptions/Notify/Settings) loads, broadcast form submits. Mobile flow: send OTP + verify OTP (123456) advances to the emergency-contact onboarding screen. CRITICAL infra gap: WebSocket wss://<preview>/ws/sos/{id}?token=... returns HTTP 502 through the public ingress because /ws/ is not proxied to backend (only /api is). The WebSocket implementation itself is correct — verified end-to-end on localhost (snapshot frame + location broadcast on POST /api/sos/{id}/location).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "wss://<preview>/ws/sos/{id}?token=...", "issue": "Public preview ingress does not proxy /ws/* to backend (returns HTTP 200 HTML on upgrade attempt, HTTP 502 during handshake). WebSocket confirmed working locally against ws://localhost:8001. Requires ingress routing update for /ws/* (or move endpoint under /api).", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Auth / onboarding", "issues": ["React Native Web warns: 'shadow*' style props are deprecated — replace with boxShadow to silence and stay compatible with future RN Web versions.", "React Native Web warns: 'Unexpected text node: . A text node cannot be a child of a <View>' — a stray whitespace/text node is being placed directly inside a <View> in the auth or onboarding screen; wrap all text in <Text>."]}
+    ],
+    "react_native_issues": [
+      {"component": "shadow style props", "issue": "'shadow*' style props deprecated in react-native-web; use 'boxShadow'. Referenced in shared theme file used across screens (src/theme.ts shadow token)."},
+      {"component": "Text node inside <View>", "issue": "Console repeatedly logs 'A text node cannot be a child of a <View>' on the mobile auth/onboarding path — indicates whitespace or {expression || ''} being rendered directly under a <View>. Trace in /app/frontend/app/index.tsx and wrap in <Text> or remove stray whitespace."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pahel_regression.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "action_items": [
+    "Expose the FastAPI WebSocket (/ws/sos/{id}) through the public Kubernetes/Cloudflare ingress. Either (a) update ingress to also proxy /ws/* to backend:8001 with Upgrade/Connection headers, or (b) relocate the endpoint under /api (e.g. /api/ws/sos/{id}) so the existing /api rule handles it.",
+    "Fix RN Web deprecation: replace 'shadow*' style props with 'boxShadow' in the shared theme (src/theme).",
+    "Fix stray whitespace/text node under <View> on the auth/onboarding screen (index.tsx)."
+  ],
+  "critical_code_review_comments": [
+    "server.py get_sos allows anyone to fetch an ACTIVE SOS by id (owner OR status ACTIVE). This is intentional for responders but exposes user_mobile / location to any authenticated user who guesses/knows an id; consider limiting to nearby users or admin/responders.",
+    "server.py subscription verify still fails-open when RAZORPAY_KEY_SECRET is present — it does NOT verify Razorpay signature (unlike donations/verify). This should mirror donations/verify signature check when keys are live.",
+    "server.py sends WhatsApp only to the sender's own emergency contact (as required), and correctly forwards the digits after stripping +91 — good.",
+    "server.py file is ~800 lines and mixes routing, DTOs, and adapters — consider splitting into routers/services modules before further growth."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pahel_regression.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {"backend": "93% (13/14 pytest; only WSS-through-preview failing due to ingress)", "frontend": "100% (admin login + all 10 admin tabs + broadcast, mobile auth send+verify OTP -> onboarding)"},
+  "seed_data_creation": "Tests created transient users/SOS/blood/volunteer/broadcast rows tagged with TEST_ prefixes. Existing admin (admin@pahelfoundation.org) and seeded plans/settings untouched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Live WhatsApp bridge returned success on SOS create (whatsapp_status='sent'). Live Razorpay keys active — donations/verify rejects invalid signature and blocks the mock_payment path (as expected). Subscriptions/verify still accepts anything when key secret is set — needs signature enforcement. WebSocket works locally; blocked at preview ingress. Admin route is served by Expo Router at /admin (was fixed since iteration_3). Do not spam WhatsApp bridge — use +919999999999 as synthetic emergency contact.",
+  "rca_of_issue": "Preview ingress rule forwards only /api/* to backend:8001. The new WebSocket endpoint is /ws/sos/{id}, which the ingress instead serves as SPA HTML (Cloudflare returns 200 text/html on GET, and 502 on Upgrade). Verified by direct curl against wss://<preview>/ws/... and by running the same test against ws://localhost:8001 (backend accepts the JWT, sends a 'snapshot' frame, then a 'location' frame after POST /api/sos/{id}/location, all working). Fix: either configure ingress to proxy /ws/* with WebSocket Upgrade to backend:8001, or move the WebSocket path under the already-routed /api prefix (e.g. @app.websocket('/api/ws/sos/{id}'))."
+}

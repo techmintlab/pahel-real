@@ -1,0 +1,198 @@
+{
+  "app_name": "Pahel Foundation",
+  "personality": "3 Editorial Mobile LIGHT paired with 1 iOS-Native Clean structure",
+  "personality_one_liner": "Calm, trustworthy, highly structured foundation and emergency response app combining editorial elegance with robust operational clarity.",
+  "color": {
+    "surface": "#FDFBF7",
+    "onSurface": "#1C1B18",
+    "surfaceSecondary": "#F4EFE6",
+    "onSurfaceSecondary": "#2C2A26",
+    "surfaceTertiary": "#EAE3D5",
+    "onSurfaceTertiary": "#3E3A33",
+    "surfaceInverse": "#1C1B18",
+    "onSurfaceInverse": "#FDFBF7",
+    "brand": "#9E2A2B",
+    "brandPrimary": "#9E2A2B",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#D4A373",
+    "onBrandSecondary": "#1C1B18",
+    "brandTertiary": "#F2E8CF",
+    "onBrandTertiary": "#582F0E",
+    "success": "#2D6A4F",
+    "onSuccess": "#FFFFFF",
+    "warning": "#C67D0A",
+    "onWarning": "#FFFFFF",
+    "error": "#B7094C",
+    "onError": "#FFFFFF",
+    "info": "#2B4C7E",
+    "onInfo": "#FFFFFF",
+    "border": "#E2DACB",
+    "borderStrong": "#C2B59B",
+    "divider": "#EFEAD8"
+  },
+  "typography": {
+    "displayFontFamily": "Playfair Display",
+    "textFontFamily": "DM Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical padding, consistent card and container margins with touch targets >= 44pt",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass on sticky headers over scrolling content",
+      "Apply translucent surface overlays on bottom-sheet headers and hero cards"
+    ],
+    "dont's": [
+      "Avoid glassmorphism on dense data tables or form inputs",
+      "Do not use low contrast text on frosted surfaces"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth / OTP",
+      "purpose": "Secure mobile-number authentication via APITXT OTP verification through backend.",
+      "states": {
+        "loading": "Centered verification spinner with brand crimson accent",
+        "empty": "Clean phone number input screen with country code and send OTP button",
+        "error": "Inline error banner with retry option and clear feedback"
+      },
+      "layout": "Editorial full-height single column with Pahel Foundation logo header, warm paper background, large typography for phone input, and sticky bottom action button."
+    },
+    {
+      "name": "Emergency Contact Onboarding",
+      "purpose": "Mandatory first-time emergency contact setup for safety and SOS dispatch.",
+      "states": {
+        "loading": "Saving emergency contact secure state indicator",
+        "empty": "Form fields for contact name, relationship, and phone number with prominent helper text",
+        "error": "Validation error highlight on missing or incorrect phone numbers"
+      },
+      "layout": "Structured form sheet with clear title, input fields, contact picker integration, and sticky primary action button."
+    },
+    {
+      "name": "Permission Onboarding",
+      "purpose": "Mandatory location and notification permissions setup for emergency response.",
+      "states": {
+        "loading": "Checking system permission status",
+        "empty": "Illustrated permission cards explaining GPS and push notification importance",
+        "error": "Fallback warning card with direct settings redirect button"
+      },
+      "layout": "Two-step visual card stack with clear icons, descriptive text, and 'Grant Access' buttons."
+    },
+    {
+      "name": "Home Dashboard",
+      "purpose": "Central hub featuring PAHEL FOUNDATION branding, prominent red SOS, blood requests, active alerts, and quick actions.",
+      "states": {
+        "loading": "Skeleton card loaders for alerts, blood requests, and active campaigns",
+        "empty": "Welcome banner with emergency readiness checklist and quick start action cards",
+        "error": "Network retry banner with cached status indicator"
+      },
+      "layout": "Scrollable editorial home feed with sticky glass header, prominent circular crimson SOS emergency trigger, quick action grid (Blood, Volunteer, Plans, Donations), active alerts ticker, and recent foundation stories."
+    },
+    {
+      "name": "SOS Emergency Flow",
+      "purpose": "Immediate emergency distress trigger with GPS acquisition, 50km geospatial search, and emergency contact WhatsApp dispatch.",
+      "states": {
+        "loading": "Pulsing red radar animation acquiring live GPS coordinates",
+        "empty": "Press and hold or tap emergency confirmation prompt",
+        "error": "GPS acquisition error banner with manual location entry option"
+      },
+      "layout": "Full-screen high-urgency crimson alert view with countdown confirmation, live map thumbnail, emergency contacts list, and cancellation toggle."
+    },
+    {
+      "name": "Blood Request Flow",
+      "purpose": "Browse, create, and respond to urgent blood donation requests within 50 KM radius.",
+      "states": {
+        "loading": "Loading active blood requests within radius",
+        "empty": "No active requests nearby illustration with 'Post Blood Request' button",
+        "error": "Failed to fetch nearby blood requests with retry button"
+      },
+      "layout": "Tabbed filter view (Nearby Requests / My Requests) with detailed emergency blood cards featuring urgency tags, hospital distance, and instant donor response buttons."
+    },
+    {
+      "name": "Donations & Subscriptions",
+      "purpose": "Razorpay order creation, secure payment verification, recurring subscription plans, and donation history/receipts.",
+      "states": {
+        "loading": "Processing secure payment gateway connection",
+        "empty": "No donation history illustration with featured cause cards",
+        "error": "Payment verification failure message with support contact"
+      },
+      "layout": "Segmented view for One-Time Causes and Monthly Subscriptions with tier cards, secure Razorpay badge, and downloadable receipt ledger."
+    },
+    {
+      "name": "Volunteer & Plans",
+      "purpose": "Volunteer application form, status tracking, and dynamic foundation support plans.",
+      "states": {
+        "loading": "Loading volunteer status and active foundation plans",
+        "empty": "Join Pahel Foundation volunteer network card",
+        "error": "Failed to load profile status with retry button"
+      },
+      "layout": "Editorial cards showcasing volunteer roles, approval status timeline, and dynamic subscription/support plans."
+    },
+    {
+      "name": "Profile & History",
+      "purpose": "Restricted profile management (name and emergency contact edits) and activity history.",
+      "states": {
+        "loading": "Loading user profile details",
+        "empty": "No past activity recorded",
+        "error": "Failed to update profile data with error toast"
+      },
+      "layout": "Clean profile header with verified badge, editable name & emergency contact fields, activity log, and sign out option."
+    }
+  ],
+  "images": {
+    "logo": {
+      "url": "https://images.unsplash.com/photo-1532629345422-7515f3d16bb9?auto=format&fit=crop&q=80&w=400",
+      "alt": "Pahel Foundation Brand Logo"
+    },
+    "hero_banner": {
+      "url": "https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?auto=format&fit=crop&q=80&w=1200",
+      "dark": "https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&q=80&w=1200",
+      "alt": "Community relief and philanthropic support"
+    },
+    "blood_emergency": {
+      "url": "https://images.unsplash.com/photo-1615461066841-6116e61058f4?auto=format&fit=crop&q=80&w=800",
+      "alt": "Blood donation emergency banner"
+    },
+    "volunteer_hands": {
+      "url": "https://images.unsplash.com/photo-1593113598332-cd288d649433?auto=format&fit=crop&q=80&w=800",
+      "alt": "Volunteer community support"
+    }
+  },
+  "instructions_to_main_agent": "Build the React Native Expo mobile app for Pahel Foundation following the 3 Editorial Mobile LIGHT personality combined with iOS-Native clean layout. Ensure the prominent crimson SOS button is instantly accessible on the home dashboard and triggers the 50km geospatial emergency flow. Implement APITXT OTP authentication, mandatory emergency contact & permissions setup, Razorpay donation/subscription integration, blood request dispatch, volunteer application, and restricted profile management. Use expo-image, expo-blur, and react-native-reanimated for smooth native animations. Ensure all touch targets are >= 44x44pt and safe area insets are respected on all screens."
+}
