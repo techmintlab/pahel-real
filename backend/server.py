@@ -196,7 +196,7 @@ async def send_apitxt_otp(mobile: str, code: str) -> Dict[str, Any]:
 
 
 async def notify_tokens(tokens: List[str], title: str, message: str, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Legacy Expo-push fallback (kept for local dev where the Emergent relay is not configured)."""
+    """Legacy Expo-push fallback (kept only for the preview where firebase-admin is not initialised)."""
     if not tokens:
         return {"status": "disabled", "sent": 0}
     sent = 0
@@ -214,70 +214,129 @@ async def notify_tokens(tokens: List[str], title: str, message: str, data: Dict[
     return {"status": "sent" if sent else "unavailable", "sent": sent, "attempted": len(tokens)}
 
 
-PUSH_BASE_URL = "https://integrations.emergentagent.com"
+try:
+    import firebase_admin
+    from firebase_admin import credentials as fb_credentials, messaging as fb_messaging
+    _FIREBASE_AVAILABLE = True
+except Exception as exc:  # pragma: no cover — firebase-admin is a hard dep, but fail soft
+    logger.warning("firebase-admin unavailable: %s", exc)
+    firebase_admin = None  # type: ignore[assignment]
+    fb_credentials = None  # type: ignore[assignment]
+    fb_messaging = None  # type: ignore[assignment]
+    _FIREBASE_AVAILABLE = False
+
+_firebase_app = None
 
 
-def push_relay_enabled() -> bool:
-    key = os.getenv("EMERGENT_PUSH_KEY", "placeholder")
-    return bool(key) and key != "placeholder"
+def firebase_ready() -> bool:
+    return _firebase_app is not None and _FIREBASE_AVAILABLE
+
+
+def init_firebase() -> None:
+    """Initialise the Firebase Admin SDK once at process startup.
+
+    Reads the service-account JSON from FIREBASE_CREDENTIALS_FILE. Missing file
+    or malformed credentials only log a warning; the rest of the app keeps
+    working with the Expo legacy fallback.
+    """
+    global _firebase_app
+    if not _FIREBASE_AVAILABLE or _firebase_app is not None:
+        return
+    path = os.getenv("FIREBASE_CREDENTIALS_FILE", "")
+    if not path:
+        logger.info("FIREBASE_CREDENTIALS_FILE not set — FCM disabled")
+        return
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = ROOT_DIR / resolved
+    if not resolved.exists():
+        logger.warning("Firebase credentials file missing at %s — FCM disabled", resolved)
+        return
+    try:
+        cred = fb_credentials.Certificate(str(resolved))
+        _firebase_app = firebase_admin.initialize_app(cred, name="pahel-foundation")
+        logger.info("Firebase Admin SDK initialised for project=%s", cred.project_id)
+    except Exception as exc:
+        logger.warning("Firebase Admin initialise failed: %s", exc)
+        _firebase_app = None
 
 
 async def push_register(user_id: str, platform: str, device_token: str) -> Dict[str, Any]:
-    """Register a device token with the Emergent push relay (SuprSend → FCM/APNs).
+    """Store the FCM device token in Mongo so send_push can target the user."""
+    await db.users.update_one({"id": user_id}, {"$addToSet": {"push_tokens": device_token}, "$set": {"device_platform": platform, "updated_at": now_iso()}})
+    return {"status": "registered" if firebase_ready() else "development", "provider": "firebase-admin" if firebase_ready() else "expo_legacy"}
 
-    Runs as a no-op in preview where EMERGENT_PUSH_KEY is still the placeholder;
-    the real key is injected at deployment time.
-    """
-    if not push_relay_enabled():
-        return {"status": "development", "message": "Emergent push relay uses placeholder key"}
-    try:
-        response = requests.post(
-            f"{PUSH_BASE_URL}/api/v1/push/users/register",
-            headers={"X-Push-Key": os.getenv("EMERGENT_PUSH_KEY", "")},
-            json={"user_id": user_id, "platform": platform, "device_token": device_token},
-            timeout=10,
-        )
-        return {"status": "registered" if response.ok else "failed", "code": response.status_code}
-    except requests.RequestException as exc:
-        logger.warning("Emergent push register unavailable: %s", exc)
-        return {"status": "failed", "message": "Provider unavailable"}
+
+def _prune_invalid_tokens(user_id: str, tokens: List[str], responses: List[Any]) -> List[str]:
+    invalid: List[str] = []
+    for token, resp in zip(tokens, responses):
+        if resp.success:
+            continue
+        error = resp.exception
+        if error is None:
+            continue
+        code = getattr(error, "code", "")
+        if code in {"registration-token-not-registered", "invalid-argument", "invalid-registration-token", "sender-id-mismatch", "unregistered", "not-found", "mismatched-credential"}:
+            invalid.append(token)
+    return invalid
 
 
 async def send_push(recipients: List[str], title: str, message: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Deliver a push to a list of user ids via the Emergent relay.
+    """Send an FCM push to every registered device of every recipient user id.
 
-    Falls back to the Expo test relay (via push_tokens on the user document)
-    when the Emergent key is still the placeholder so preview builds stay
-    testable without touching production infrastructure.
+    Uses firebase-admin messaging.send_each_for_multicast for real delivery.
+    When Firebase is not initialised (e.g. missing credentials in preview),
+    falls back to the Expo public relay so the flow stays testable.
     """
     recipients = [rid for rid in recipients if rid]
     if not recipients:
         return {"status": "empty", "sent": 0}
-    data = {"title": title[:120], "message": message[:480]}
+    users = await db.users.find({"id": {"$in": recipients}}, {"_id": 0, "id": 1, "push_tokens": 1}).to_list(len(recipients))
+    token_to_user: Dict[str, str] = {}
+    for user in users:
+        for token in user.get("push_tokens", []) or []:
+            if token:
+                token_to_user[token] = user["id"]
+    tokens = list(token_to_user.keys())
+    data_payload = {"title": title[:120], "message": message[:480]}
     if extra:
-        data.update(extra)
-    if not push_relay_enabled():
-        users = await db.users.find({"id": {"$in": recipients}}, {"_id": 0, "push_tokens": 1}).to_list(len(recipients))
-        tokens = [token for user in users for token in user.get("push_tokens", [])]
-        legacy = await notify_tokens(tokens, title, message, extra or {})
+        data_payload.update({k: str(v) for k, v in extra.items() if v is not None})
+    if not firebase_ready():
+        legacy = await notify_tokens(tokens, title, message, data_payload)
         return {"status": legacy.get("status", "development"), "sent": legacy.get("sent", 0), "attempted": len(recipients), "channel": "expo_legacy"}
+    if not tokens:
+        return {"status": "no_tokens", "sent": 0, "attempted": len(recipients), "channel": "firebase"}
     sent = 0
-    for start in range(0, len(recipients), 100):
-        chunk = recipients[start:start + 100]
-        try:
-            response = requests.post(
-                f"{PUSH_BASE_URL}/api/v1/push/trigger",
-                headers={"X-Push-Key": os.getenv("EMERGENT_PUSH_KEY", "")},
-                json={"recipients": chunk, "data": data},
-                timeout=10,
+    failed = 0
+    invalid_tokens: List[str] = []
+    try:
+        for start in range(0, len(tokens), 500):  # FCM allows up to 500 per multicast
+            chunk = tokens[start:start + 500]
+            multicast = fb_messaging.MulticastMessage(
+                tokens=chunk,
+                notification=fb_messaging.Notification(title=title[:120], body=message[:480]),
+                data=data_payload,
+                android=fb_messaging.AndroidConfig(
+                    priority="high",
+                    notification=fb_messaging.AndroidNotification(
+                        channel_id="default",
+                        sound="default",
+                        color="#9E2A2B",
+                    ),
+                ),
+                apns=fb_messaging.APNSConfig(payload=fb_messaging.APNSPayload(aps=fb_messaging.Aps(sound="default"))),
             )
-            if response.ok:
-                sent += len(chunk)
-            else:
-                logger.warning("Emergent push relay returned %s: %s", response.status_code, response.text[:200])
-        except requests.RequestException as exc:
-            logger.warning("Emergent push relay unavailable: %s", exc)
-    return {"status": "sent" if sent else "failed", "sent": sent, "attempted": len(recipients), "channel": "emergent"}
+            batch = fb_messaging.send_each_for_multicast(multicast, app=_firebase_app)
+            sent += batch.success_count
+            failed += batch.failure_count
+            invalid_tokens.extend(_prune_invalid_tokens("_", chunk, batch.responses))
+    except Exception as exc:
+        logger.warning("FCM send failed: %s", exc)
+        return {"status": "failed", "sent": 0, "attempted": len(recipients), "channel": "firebase", "error": str(exc)[:200]}
+    # Remove tokens that Firebase reported as invalid so they don't linger.
+    if invalid_tokens:
+        await db.users.update_many({"push_tokens": {"$in": invalid_tokens}}, {"$pull": {"push_tokens": {"$in": invalid_tokens}}})
+    return {"status": "sent" if sent else "failed", "sent": sent, "failed": failed, "attempted": len(recipients), "invalid_tokens_removed": len(invalid_tokens), "channel": "firebase"}
 
 
 async def record_notifications(user_ids: List[str], notification_type: str, title: str, message: str, related_id: Optional[str] = None) -> int:
@@ -481,7 +540,6 @@ async def update_location(payload: LocationInput, user: Dict[str, Any] = Depends
 
 @api_router.post("/users/me/device")
 async def register_device(payload: DeviceInput, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"push_tokens": payload.token}, "$set": {"device_platform": payload.platform, "updated_at": now_iso()}})
     relay = await push_register(user["id"], payload.platform, payload.token)
     return ok("Notification device registered", {"relay": relay})
 
@@ -909,6 +967,7 @@ async def http_error_handler(_: Request, exc: HTTPException) -> JSONResponse:
 
 @app.on_event("startup")
 async def startup() -> None:
+    init_firebase()
     await db.users.create_index("mobile", unique=True)
     await db.users.create_index([("location", "2dsphere")])
     await db.sos_alerts.create_index("created_at")

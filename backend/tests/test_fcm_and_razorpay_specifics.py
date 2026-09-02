@@ -47,8 +47,9 @@ def test_device_registration_accepts_fcm_platform_and_returns_relay_status():
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert "relay" in data
-    # EMERGENT_PUSH_KEY is 'placeholder' in preview -> relay should indicate development, not crash.
-    assert data["relay"]["status"] in {"development", "registered", "failed"}
+    # firebase-admin is initialised in this deployment -> relay must report registered + firebase-admin.
+    assert data["relay"]["status"] == "registered", data["relay"]
+    assert data["relay"]["provider"] == "firebase-admin", data["relay"]
     me = api("GET", "/users/me", headers=headers).json()["data"]
     assert "fcm_test_token_1234567890" in me["push_tokens"]
     assert me.get("device_platform") == "android"
@@ -62,7 +63,7 @@ def test_sos_create_exposes_push_status_and_writes_notifications_for_nearby_user
 
     sos = api("POST", "/sos/create", headers=sender_headers).json()["data"]
     assert "push_status" in sos
-    assert sos["push_status"] in {"sent", "unavailable", "development", "empty", "disabled", "failed"}
+    assert sos["push_status"] in {"sent", "unavailable", "no_tokens", "empty", "disabled", "failed"}
     assert sos["nearby_users_notified"] >= 1
 
     # Nearby user should now have an SOS notification
@@ -93,7 +94,9 @@ def test_broadcast_writes_one_notification_per_user_and_returns_push_envelope():
     assert r.status_code == 200
     body = r.json()["data"]
     assert body["recipients"] >= 1
-    assert "push" in body and body["push"]["status"] in {"development", "sent", "failed", "unavailable", "empty"}
+    assert "push" in body and body["push"]["status"] in {"sent", "failed", "unavailable", "no_tokens", "empty"}
+    # Broadcast must go through firebase-admin now (not emergent relay / expo_legacy)
+    assert body["push"].get("channel") == "firebase", body["push"]
     # Recipient sees exactly one notification with that title
     notif = api("GET", "/notifications", headers=user_headers).json()["data"]["items"]
     matching = [n for n in notif if n["title"] == title]
@@ -145,3 +148,36 @@ def test_subscription_order_is_real_razorpay():
     assert order["is_development_fallback"] is False
     assert order["order_id"].startswith("order_") and not order["order_id"].startswith("order_dev_")
     assert order["key_id"] == "rzp_live_RuAmqyoj9yIDOP"
+
+
+# ---------- Firebase Admin SDK broadcast with fake tokens ----------
+def test_broadcast_with_fake_fcm_tokens_uses_firebase_channel_and_reports_failed():
+    """Register 2-3 fake FCM tokens then broadcast. Firebase will legitimately reject them,
+    so push.channel must be 'firebase' and failed>0, sent==0, endpoint must NOT crash."""
+    headers, _ = _new_user()
+    for i in range(3):
+        r = api("POST", "/users/me/device", headers=headers,
+                json={"token": f"test-fcm-token-{uuid.uuid4().hex[:12]}", "platform": "android"})
+        assert r.status_code == 200
+        assert r.json()["data"]["relay"]["provider"] == "firebase-admin"
+
+    ah = _admin_headers()
+    br = api("POST", "/admin/notifications/broadcast", headers=ah,
+             json={"title": f"TEST_FB_{uuid.uuid4().hex[:6]}", "message": "fake token firebase test"})
+    assert br.status_code == 200, br.text
+    push = br.json()["data"]["push"]
+    assert push["channel"] == "firebase", push
+    # Fake tokens rejected -> failed>0 and sent==0. Endpoint must not crash.
+    assert push["status"] in {"sent", "failed"}
+    assert push.get("failed", 0) >= 1, push
+    assert push.get("sent", 0) == 0, push
+
+
+# ---------- Emergent relay path must be fully removed ----------
+def test_no_emergent_relay_references_in_server():
+    """Confirm server.py no longer imports or calls integrations.emergentagent.com push relay."""
+    with open("/app/backend/server.py") as f:
+        src = f.read()
+    assert "integrations.emergentagent.com" not in src, "Emergent push relay URL still referenced"
+    # send_push must use firebase-admin
+    assert "send_each_for_multicast" in src, "send_push not using firebase-admin messaging"
