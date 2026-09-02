@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "338130321043",
+    "project_id": "pahel-foundation",
+    "storage_bucket": "pahel-foundation.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:338130321043:android:53a3eceb7a896faf00d766",
+        "android_client_info": {
+          "package_name": "com.emergent.pahelfoundation.m04l6f"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBNoIsg2DH7hXen2Pr2AjIDTRf13fltx6w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

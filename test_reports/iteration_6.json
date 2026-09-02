@@ -1,0 +1,32 @@
+{
+  "summary": "FCM push relay refactor + live Razorpay integration verified end-to-end. 14/14 existing regression tests pass and 7/7 new targeted tests pass (21/21 total). Real Razorpay orders are created (order_ prefix, provider=razorpay, key_id=rzp_live_RuAmqyoj9yIDOP, is_development_fallback=false); HMAC-SHA256 signature verification enforced on donations/verify and subscriptions/verify (fake signature rejected with 400, correctly-signed accepted with 200). Push relay is expected to no-op with EMERGENT_PUSH_KEY='placeholder': /api/users/me/device returns 200 with relay.status='development'; SOS + blood-request payloads expose push_status and persist in-app notifications for nearby users; /api/admin/notifications/broadcast writes exactly one notification per active user and returns push.status='development'; /api/admin/volunteers/{id}/approve writes a VOLUNTEER notification for the applicant. Frontend regression: /admin logs in and every tab (Dashboard/Users/SOS alerts/Blood/Volunteers/Plans/Donations/Subscriptions/Notify users/Settings) renders (verified via screenshot; live counts: 81 users, 18 SOS, ₹4,093 donations). Mobile OTP flow (send OTP → 123456 → verify) still works — new user lands on the emergency-contact onboarding screen without crashing. Push registration on web logs the expected 'expo-notifications listener not supported on web' warning but does not crash.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pahel_regression.py",
+    "/app/backend/tests/test_fcm_and_razorpay_specifics.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/ui/admin_after_login.jpeg",
+    "/app/test_reports/ui/mobile_after_verify.jpeg"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 934 lines — consider splitting (routers/push/payments/admin) when convenient; not blocking.",
+    "push_register / send_push swallow non-2xx responses with warning logs only; that's fine for the placeholder-key preview path but consider surfacing failure counters in the response envelope once EMERGENT_PUSH_KEY is live.",
+    "verify_donation logs 'Development payment requires mock_payment' branch is unreachable while RAZORPAY_KEY_SECRET is set — kept for the isolated-dev unit test path noted in the review; documented behaviour."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fcm_and_razorpay_specifics.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% (admin + mobile OTP boot)"},
+  "seed_data_creation": "Test data created via API: ~9 fresh OTP-verified users, 1 SOS alert, 1 blood request, 1 volunteer application (auto-approved), 2 real Razorpay donation orders (₹100 & ₹250), 1 real Razorpay subscription order (plan-monthly-support ₹499), 1 admin broadcast, 1 admin contact-settings PUT. Two donation orders were successfully HMAC-verified with fake payment_id (stored in DB). Kept within the ≤3-4 Razorpay orders guideline.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "EMERGENT_PUSH_KEY is intentionally 'placeholder' in preview; when it changes, retest that /api/users/me/device returns relay.status='registered' and /api/admin/notifications/broadcast returns push.status='sent'. Live Razorpay is wired — do not exceed 3-4 new orders per iteration and never complete a real payment; use HMAC crafting for verify tests as done in test_fcm_and_razorpay_specifics.py.",
+  "rca_of_issue": "N/A — both bug fixes (FCM relay via SuprSend + Razorpay live orders) implemented and verified. Push placeholder no-op path uses Expo legacy fallback via user.push_tokens without crashing, matching the documented behaviour."
+}

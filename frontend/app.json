@@ -24,7 +24,8 @@
       },
       "edgeToEdgeEnabled": true,
       "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "POST_NOTIFICATIONS"],
-      "package": "com.emergent.pahelfoundation.m04l6f"
+      "package": "com.emergent.pahelfoundation.m04l6f",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",

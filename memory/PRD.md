@@ -7,10 +7,10 @@ A three-surface community-safety platform for PAHEL FOUNDATION:
 3. **Admin panel** — currently mounted at Expo route `/admin` so it is testable in the shared preview; can be lifted to a standalone Vite/React web app when the user is ready to deploy separately.
 
 ## Live integrations
-- **Razorpay** — LIVE keys wired in `backend/.env` (`rzp_live_RuAmqyoj9yIDOP`). Donations *and* subscription verification enforce HMAC-SHA256 signature checks.
-- **WhatsApp bridge** — `https://whatsappmessage.parsiyacricket.com/send?number=<10digits>&message=<text>` is called only for the SOS user's saved emergency contact.
-- **APITXT OTP** — configured with auth key; backend still exposes a `development_otp` fallback so the mobile app remains testable if the SMS gateway is unreachable.
-- **Expo push** — REST fallback via `exp.host/--/api/v2/push/send`; real FCM is left as an env-driven upgrade path.
+- **Razorpay (LIVE)** — Python `razorpay` SDK creates real orders (`order_...`) with `rzp_live_RuAmqyoj9yIDOP`; both donations and subscriptions require a valid HMAC-SHA256 signature on `/verify`. Mobile uses `react-native-razorpay@3.0.0` for the native Android checkout; Web/Expo Go fall back to the backend's `mock_payment` path.
+- **WhatsApp bridge** — GET `whatsappmessage.parsiyacricket.com/send` called only for the SOS user's saved emergency contact.
+- **APITXT OTP** — configured with the auth key; `development_otp=123456` remains as the preview fallback.
+- **Push (FCM via Emergent relay + Firebase)** — `google-services.json` committed at `/app/frontend/google-services.json` and wired via `app.json → android.googleServicesFile`. Backend relays device tokens to `integrations.emergentagent.com/api/v1/push/users/register` and pushes via `/api/v1/push/trigger`. `EMERGENT_PUSH_KEY` stays as `placeholder` in preview and is auto-swapped at deployment time. All SOS, blood, volunteer, and admin-broadcast events also create in-app notification records so the mobile notifications list is populated immediately.
 
 ## Key flows
 - **Auth**: `POST /api/auth/send-otp` → `POST /api/auth/verify-otp` → JWT. First-time users then set an emergency contact and grant location + notification permissions.

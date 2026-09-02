@@ -12,6 +12,7 @@ import bcrypt
 import jwt
 import requests
 from dotenv import load_dotenv
+import razorpay
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -195,6 +196,7 @@ async def send_apitxt_otp(mobile: str, code: str) -> Dict[str, Any]:
 
 
 async def notify_tokens(tokens: List[str], title: str, message: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Legacy Expo-push fallback (kept for local dev where the Emergent relay is not configured)."""
     if not tokens:
         return {"status": "disabled", "sent": 0}
     sent = 0
@@ -210,6 +212,93 @@ async def notify_tokens(tokens: List[str], title: str, message: str, data: Dict[
         except requests.RequestException:
             logger.warning("Push provider unavailable for token")
     return {"status": "sent" if sent else "unavailable", "sent": sent, "attempted": len(tokens)}
+
+
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+
+
+def push_relay_enabled() -> bool:
+    key = os.getenv("EMERGENT_PUSH_KEY", "placeholder")
+    return bool(key) and key != "placeholder"
+
+
+async def push_register(user_id: str, platform: str, device_token: str) -> Dict[str, Any]:
+    """Register a device token with the Emergent push relay (SuprSend → FCM/APNs).
+
+    Runs as a no-op in preview where EMERGENT_PUSH_KEY is still the placeholder;
+    the real key is injected at deployment time.
+    """
+    if not push_relay_enabled():
+        return {"status": "development", "message": "Emergent push relay uses placeholder key"}
+    try:
+        response = requests.post(
+            f"{PUSH_BASE_URL}/api/v1/push/users/register",
+            headers={"X-Push-Key": os.getenv("EMERGENT_PUSH_KEY", "")},
+            json={"user_id": user_id, "platform": platform, "device_token": device_token},
+            timeout=10,
+        )
+        return {"status": "registered" if response.ok else "failed", "code": response.status_code}
+    except requests.RequestException as exc:
+        logger.warning("Emergent push register unavailable: %s", exc)
+        return {"status": "failed", "message": "Provider unavailable"}
+
+
+async def send_push(recipients: List[str], title: str, message: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Deliver a push to a list of user ids via the Emergent relay.
+
+    Falls back to the Expo test relay (via push_tokens on the user document)
+    when the Emergent key is still the placeholder so preview builds stay
+    testable without touching production infrastructure.
+    """
+    recipients = [rid for rid in recipients if rid]
+    if not recipients:
+        return {"status": "empty", "sent": 0}
+    data = {"title": title[:120], "message": message[:480]}
+    if extra:
+        data.update(extra)
+    if not push_relay_enabled():
+        users = await db.users.find({"id": {"$in": recipients}}, {"_id": 0, "push_tokens": 1}).to_list(len(recipients))
+        tokens = [token for user in users for token in user.get("push_tokens", [])]
+        legacy = await notify_tokens(tokens, title, message, extra or {})
+        return {"status": legacy.get("status", "development"), "sent": legacy.get("sent", 0), "attempted": len(recipients), "channel": "expo_legacy"}
+    sent = 0
+    for start in range(0, len(recipients), 100):
+        chunk = recipients[start:start + 100]
+        try:
+            response = requests.post(
+                f"{PUSH_BASE_URL}/api/v1/push/trigger",
+                headers={"X-Push-Key": os.getenv("EMERGENT_PUSH_KEY", "")},
+                json={"recipients": chunk, "data": data},
+                timeout=10,
+            )
+            if response.ok:
+                sent += len(chunk)
+            else:
+                logger.warning("Emergent push relay returned %s: %s", response.status_code, response.text[:200])
+        except requests.RequestException as exc:
+            logger.warning("Emergent push relay unavailable: %s", exc)
+    return {"status": "sent" if sent else "failed", "sent": sent, "attempted": len(recipients), "channel": "emergent"}
+
+
+async def record_notifications(user_ids: List[str], notification_type: str, title: str, message: str, related_id: Optional[str] = None) -> int:
+    """Persist an in-app notification record for every recipient."""
+    docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": uid,
+            "type": notification_type,
+            "title": title,
+            "message": message,
+            "related_id": related_id,
+            "is_read": False,
+            "created_at": now_iso(),
+        }
+        for uid in user_ids
+        if uid
+    ]
+    if docs:
+        await db.notifications.insert_many(docs)
+    return len(docs)
 
 
 async def send_whatsapp_emergency(contact: str, message: str) -> Dict[str, Any]:
@@ -393,7 +482,8 @@ async def update_location(payload: LocationInput, user: Dict[str, Any] = Depends
 @api_router.post("/users/me/device")
 async def register_device(payload: DeviceInput, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     await db.users.update_one({"id": user["id"]}, {"$addToSet": {"push_tokens": payload.token}, "$set": {"device_platform": payload.platform, "updated_at": now_iso()}})
-    return ok("Notification device registered")
+    relay = await push_register(user["id"], payload.platform, payload.token)
+    return ok("Notification device registered", {"relay": relay})
 
 
 @api_router.post("/sos/create")
@@ -406,15 +496,21 @@ async def create_sos(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, 
     await db.sos_alerts.insert_one(dict(sos))
     location = user["location"]
     try:
-        nearby = await db.users.find({"id": {"$ne": user["id"]}, "location": {"$near": {"$geometry": {"type": "Point", "coordinates": [location["longitude"], location["latitude"]]}, "$maxDistance": int(float(os.getenv("SOS_RADIUS_KM", "50")) * 1000)}}, "status": "ACTIVE"}, {"_id": 0, "push_tokens": 1}).to_list(500)
+        nearby = await db.users.find({"id": {"$ne": user["id"]}, "location": {"$near": {"$geometry": {"type": "Point", "coordinates": [location["longitude"], location["latitude"]]}, "$maxDistance": int(float(os.getenv("SOS_RADIUS_KM", "50")) * 1000)}}, "status": "ACTIVE"}, {"_id": 0, "id": 1}).to_list(500)
     except Exception as exc:
         logger.warning("Nearby SOS query unavailable: %s", exc)
         nearby = []
-    tokens = [token for item in nearby for token in item.get("push_tokens", [])]
-    push_result = await notify_tokens(tokens, "Emergency Help Needed", f"A user nearby needs emergency help. Name: {sos['user_name']}", {"type": "SOS", "sosId": sos["id"]})
+    nearby_ids = [item["id"] for item in nearby if item.get("id")]
+    push_result = await send_push(
+        nearby_ids,
+        "Emergency Help Needed",
+        f"{sos['user_name']} nearby needs urgent help. Tap to view the live location.",
+        {"type": "SOS", "sosId": sos["id"], "action_url": f"/sos/{sos['id']}"},
+    )
+    await record_notifications(nearby_ids, "SOS", "Emergency Help Needed", f"{sos['user_name']} nearby needs urgent help.", sos["id"])
     whatsapp = await send_whatsapp_emergency(user["emergency_contact"]["mobile"], f"PAHEL FOUNDATION EMERGENCY ALERT\nName: {sos['user_name']}\nMobile: {sos['user_mobile']}\nLocation: https://www.openstreetmap.org/?mlat={location['latitude']}&mlon={location['longitude']}")
-    await db.sos_alerts.update_one({"id": sos["id"]}, {"$set": {"nearby_users_notified": len(nearby), "whatsapp_status": whatsapp.get("status", "unknown"), "push_status": push_result.get("status")}})
-    sos["nearby_users_notified"] = len(nearby)
+    await db.sos_alerts.update_one({"id": sos["id"]}, {"$set": {"nearby_users_notified": len(nearby_ids), "whatsapp_status": whatsapp.get("status", "unknown"), "push_status": push_result.get("status")}})
+    sos["nearby_users_notified"] = len(nearby_ids)
     sos["whatsapp_status"] = whatsapp.get("status", "unknown")
     sos["push_status"] = push_result.get("status")
     return ok("SOS created successfully", sos)
@@ -472,13 +568,20 @@ async def create_blood_request(payload: BloodRequestInput, user: Dict[str, Any] 
     location = {"type": "Point", "coordinates": [payload.longitude, payload.latitude], "latitude": payload.latitude, "longitude": payload.longitude}
     record = {"id": str(uuid.uuid4()), "requester_id": user["id"], "requester_name": user.get("name") or "PAHEL member", "patient_name": payload.patient_name, "blood_group": payload.blood_group, "units": payload.units, "hospital": payload.hospital, "contact_name": payload.contact_name, "contact_mobile": normalize_mobile(payload.contact_mobile), "details": payload.details, "location": location, "status": "OPEN", "donor_id": None, "created_at": now_iso()}
     await db.blood_requests.insert_one(dict(record))
-    nearby_count = 0
+    nearby_ids: List[str] = []
     try:
         nearby_users = await db.users.find({"id": {"$ne": user["id"]}, "location": {"$near": {"$geometry": {"type": "Point", "coordinates": [payload.longitude, payload.latitude]}, "$maxDistance": int(float(os.getenv("BLOOD_RADIUS_KM", "50")) * 1000)}}}, {"_id": 0, "id": 1}).limit(500).to_list(500)
-        nearby_count = len(nearby_users)
+        nearby_ids = [item["id"] for item in nearby_users if item.get("id")]
     except Exception as exc:
         logger.warning("Nearby blood query unavailable: %s", exc)
-    return ok("Blood request created", {**record, "nearby_users_notified": nearby_count})
+    push = await send_push(
+        nearby_ids,
+        f"Blood Donation Request · {payload.blood_group}",
+        f"{payload.units} unit(s) needed at {payload.hospital}. Tap to see details.",
+        {"type": "BLOOD_REQUEST", "requestId": record["id"], "action_url": f"/blood/{record['id']}"},
+    )
+    await record_notifications(nearby_ids, "BLOOD_REQUEST", f"Blood Donation Request · {payload.blood_group}", f"{payload.units} unit(s) needed at {payload.hospital}.", record["id"])
+    return ok("Blood request created", {**record, "nearby_users_notified": len(nearby_ids), "push_status": push.get("status")})
 
 
 @api_router.get("/blood-requests/history")
@@ -529,12 +632,35 @@ async def get_plans(_: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]
     return ok("Plans loaded", plans)
 
 
+def razorpay_client() -> Optional[razorpay.Client]:
+    key_id = os.getenv("RAZORPAY_KEY_ID", "")
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET", "")
+    if not key_id or not key_secret:
+        return None
+    return razorpay.Client(auth=(key_id, key_secret))
+
+
 async def create_payment_order(user: Dict[str, Any], amount: int, purpose: str, kind: str) -> Dict[str, Any]:
-    order_id = f"order_{uuid.uuid4().hex[:14]}"
-    record = {"id": str(uuid.uuid4()), "order_id": order_id, "user_id": user["id"], "amount": amount, "purpose": purpose, "kind": kind, "status": "CREATED", "created_at": now_iso()}
+    client_rp = razorpay_client()
+    receipt = f"pf_{uuid.uuid4().hex[:16]}"
+    if client_rp is not None:
+        try:
+            razorpay_order = client_rp.order.create({
+                "amount": amount * 100,  # Razorpay expects paise
+                "currency": "INR",
+                "receipt": receipt,
+                "notes": {"user_id": user["id"], "kind": kind, "purpose": purpose},
+            })
+            order_id = razorpay_order["id"]
+        except Exception as exc:
+            logger.warning("Razorpay order.create failed, falling back to development order: %s", exc)
+            order_id = f"order_dev_{uuid.uuid4().hex[:14]}"
+            client_rp = None
+    else:
+        order_id = f"order_dev_{uuid.uuid4().hex[:14]}"
+    record = {"id": str(uuid.uuid4()), "order_id": order_id, "receipt": receipt, "user_id": user["id"], "amount": amount, "purpose": purpose, "kind": kind, "status": "CREATED", "created_at": now_iso()}
     await db.payment_orders.insert_one(dict(record))
-    configured = bool(os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET"))
-    return {**record, "provider": "razorpay" if configured else "development_fallback", "key_id": os.getenv("RAZORPAY_KEY_ID", "") if configured else None, "is_development_fallback": not configured}
+    return {**record, "provider": "razorpay" if client_rp is not None else "development_fallback", "key_id": os.getenv("RAZORPAY_KEY_ID", "") if client_rp is not None else None, "is_development_fallback": client_rp is None}
 
 
 @api_router.post("/donations/create-order")
@@ -661,6 +787,11 @@ async def review_volunteer(application_id: str, decision: str) -> Dict[str, Any]
         fail("Volunteer application not found", 404)
     await db.volunteer_applications.update_one({"id": application_id}, {"$set": {"status": decision, "reviewed_at": now_iso()}})
     await db.users.update_one({"id": application["user_id"]}, {"$set": {"volunteer_status": decision}})
+    if decision in {"APPROVED", "REJECTED"}:
+        title = "Volunteer application approved" if decision == "APPROVED" else "Volunteer application update"
+        message = "You are now a PAHEL FOUNDATION volunteer." if decision == "APPROVED" else "Your volunteer application needs a fresh look. Please contact us."
+        await send_push([application["user_id"]], title, message, {"type": "VOLUNTEER", "action_url": "/profile"})
+        await record_notifications([application["user_id"]], "VOLUNTEER", title, message, application_id)
     return ok(f"Volunteer application {decision.lower()}")
 
 
@@ -698,13 +829,11 @@ async def admin_subscriptions(_: Dict[str, Any] = Depends(admin_identity)) -> Di
 
 @api_router.post("/admin/notifications/broadcast")
 async def admin_broadcast(payload: BroadcastInput, _: Dict[str, Any] = Depends(admin_identity)) -> Dict[str, Any]:
-    users = await db.users.find({"status": "ACTIVE"}, {"_id": 0, "id": 1, "push_tokens": 1}).to_list(10000)
-    notification_docs = [{"id": str(uuid.uuid4()), "user_id": user["id"], "type": "ANNOUNCEMENT", "title": payload.title, "message": payload.message, "is_read": False, "created_at": now_iso()} for user in users]
-    if notification_docs:
-        await db.notifications.insert_many(notification_docs)
-    tokens = [token for user in users for token in user.get("push_tokens", [])]
-    push = await notify_tokens(tokens, payload.title, payload.message, {"type": "ANNOUNCEMENT"})
-    return ok("Notification broadcast created", {"recipients": len(users), "push": push})
+    users = await db.users.find({"status": "ACTIVE"}, {"_id": 0, "id": 1}).to_list(10000)
+    user_ids = [user["id"] for user in users if user.get("id")]
+    await record_notifications(user_ids, "ANNOUNCEMENT", payload.title, payload.message)
+    push = await send_push(user_ids, payload.title, payload.message, {"type": "ANNOUNCEMENT", "action_url": "/"})
+    return ok("Notification broadcast created", {"recipients": len(user_ids), "push": push})
 
 
 @api_router.get("/admin/settings")
